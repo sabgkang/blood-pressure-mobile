@@ -77,6 +77,16 @@
       color: #c0392b;
       white-space: pre-line;
     }
+    .upload-tag {
+      display: inline-block;
+      margin-top: 6px;
+      font-size: 0.75rem;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+    .upload-tag.ok   { background: #eafaf1; color: #27ae60; }
+    .upload-tag.fail { background: #fff0f0; color: #c0392b; }
 
     /* ── Query result bubble ── */
     .bubble.query {
@@ -259,7 +269,7 @@
             } else {
               // BP recording result
               if (data.text) {
-                addBubble(data.text, btn.id, data.error);
+                addBubble(data.text, btn.id, data.error, data.uploaded);
                 statusEl.textContent = data.error ? data.error : '按住按鈕開始錄音';
               } else {
                 statusEl.textContent = '錯誤：' + (data.error || '未知錯誤');
@@ -274,10 +284,21 @@
       });
     }
 
-    function addBubble(text, btnId, error) {
+    function addBubble(text, btnId, error, uploaded) {
       const div = document.createElement('div');
       div.className = `bubble ${btnId}${error ? ' error' : ''}`;
-      div.textContent = error ? `${text}\n${error}` : text;
+
+      const main = document.createElement('div');
+      main.textContent = error ? `${text}\n${error}` : text;
+      div.appendChild(main);
+
+      if (!error) {
+        const tag = document.createElement('div');
+        tag.className = `upload-tag ${uploaded ? 'ok' : 'fail'}`;
+        tag.textContent = uploaded ? '已上傳' : '上傳失敗';
+        div.appendChild(tag);
+      }
+
       transcriptArea.appendChild(div);
       div.scrollIntoView({ behavior: 'smooth' });
     }

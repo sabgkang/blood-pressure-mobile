@@ -251,7 +251,20 @@ app.post('/transcribe', upload.single('audio'), async (req, res) => {
 
     if (intent === 'bp') {
       const { text, error } = formatBP(raw);
-      return res.json({ type: 'bp', text, error });
+      // Only upload if BP parsed successfully
+      let uploaded = false;
+      if (!error) {
+        const [sys, dia, hr] = text.split(',');
+        try {
+          await axios.get(
+            `https://n8n4090.yo3dp.cc/webhook/ESP32_To_BPR?UR=B&BU=${sys}&BD=${dia}&HR=${hr}`
+          );
+          uploaded = true;
+        } catch (uploadErr) {
+          console.error('Upload failed:', uploadErr.message);
+        }
+      }
+      return res.json({ type: 'bp', text, error, uploaded });
     }
 
     // Query intent

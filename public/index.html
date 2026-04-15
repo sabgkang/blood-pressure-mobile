@@ -253,6 +253,7 @@
 
           const formData = new FormData();
           formData.append('audio', blob, 'recording.webm');
+          formData.append('btnId', btn.id);
 
           try {
             const resp = await fetch('/transcribe', { method: 'POST', body: formData });

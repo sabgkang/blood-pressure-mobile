@@ -255,9 +255,10 @@ app.post('/transcribe', upload.single('audio'), async (req, res) => {
       let uploaded = false;
       if (!error) {
         const [sys, dia, hr] = text.split(',');
+        const ur = req.body.btnId === 'btn1' ? 'A' : 'B';
         try {
           await axios.get(
-            `https://n8n4090.yo3dp.cc/webhook/ESP32_To_BPR?UR=B&BU=${sys}&BD=${dia}&HR=${hr}`
+            `https://n8n4090.yo3dp.cc/webhook/ESP32_To_BPR?UR=${ur}&BU=${sys}&BD=${dia}&HR=${hr}`
           );
           uploaded = true;
         } catch (uploadErr) {

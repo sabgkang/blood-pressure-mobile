@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <title>AI 助手</title>
+  <title>血壓紀錄助手</title>
   <style>
     *, *::before, *::after {
       box-sizing: border-box;
@@ -68,6 +68,42 @@
       white-space: pre-line;
     }
 
+    /* ── Query result bubble ── */
+    .bubble.query {
+      border-left: 5px solid #2980b9;
+      max-width: 100%;
+      font-size: 0.92rem;
+      padding: 12px 14px;
+    }
+    .bubble.query .query-title {
+      font-weight: 700;
+      font-size: 1rem;
+      color: #2980b9;
+      margin-bottom: 8px;
+    }
+    .bubble.query table {
+      width: 100%;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+    .bubble.query th {
+      text-align: left;
+      color: #888;
+      font-weight: 600;
+      font-size: 0.8rem;
+      padding: 2px 6px 4px 0;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .bubble.query td {
+      padding: 3px 6px 3px 0;
+      color: #333;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .bubble.query .no-records {
+      color: #aaa;
+      font-style: italic;
+    }
+
     #status {
       text-align: center;
       font-size: 0.9rem;
@@ -126,7 +162,7 @@
 </head>
 <body>
 
-  <header>AI 助手</header>
+  <header>血壓紀錄助手</header>
 
   <div id="transcript-area"></div>
 
@@ -202,11 +238,22 @@
             const resp = await fetch('/transcribe', { method: 'POST', body: formData });
             const data = await resp.json();
 
-            if (data.text) {
-              addBubble(data.text, btn.id, data.error);
-              statusEl.textContent = data.error ? data.error : '按住按鈕開始錄音';
+            if (data.type === 'query') {
+              if (data.error) {
+                addErrorBubble(data.error, btn.id);
+                statusEl.textContent = data.error;
+              } else {
+                addQueryBubble(data.label, data.records, btn.id);
+                statusEl.textContent = `查詢完成：${data.label}，共 ${data.records.length} 筆`;
+              }
             } else {
-              statusEl.textContent = '錯誤：' + (data.error || '未知錯誤');
+              // BP recording result
+              if (data.text) {
+                addBubble(data.text, btn.id, data.error);
+                statusEl.textContent = data.error ? data.error : '按住按鈕開始錄音';
+              } else {
+                statusEl.textContent = '錯誤：' + (data.error || '未知錯誤');
+              }
             }
           } catch (e) {
             statusEl.textContent = '傳送失敗：' + e.message;
@@ -221,6 +268,50 @@
       const div = document.createElement('div');
       div.className = `bubble ${btnId}${error ? ' error' : ''}`;
       div.textContent = error ? `${text}\n${error}` : text;
+      transcriptArea.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function addErrorBubble(msg, btnId) {
+      const div = document.createElement('div');
+      div.className = `bubble ${btnId} error`;
+      div.textContent = msg;
+      transcriptArea.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function addQueryBubble(label, records, btnId) {
+      const div = document.createElement('div');
+      div.className = `bubble ${btnId} query`;
+
+      const title = document.createElement('div');
+      title.className = 'query-title';
+      title.textContent = `${label}（${records.length} 筆）`;
+      div.appendChild(title);
+
+      if (records.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'no-records';
+        empty.textContent = '此期間無記錄';
+        div.appendChild(empty);
+      } else {
+        const table = document.createElement('table');
+        table.innerHTML = `<tr>
+          <th>日期時間</th>
+          <th>收縮壓</th>
+          <th>舒張壓</th>
+          <th>心率</th>
+        </tr>`;
+        records.forEach(r => {
+          const tr = document.createElement('tr');
+          // Show date as MM/DD HH:mm
+          const dt = r.datetime.replace(/^\d{4}-/, '').replace('-', '/');
+          tr.innerHTML = `<td>${dt}</td><td>${r.sys}</td><td>${r.dia}</td><td>${r.hr}</td>`;
+          table.appendChild(tr);
+        });
+        div.appendChild(table);
+      }
+
       transcriptArea.appendChild(div);
       div.scrollIntoView({ behavior: 'smooth' });
     }

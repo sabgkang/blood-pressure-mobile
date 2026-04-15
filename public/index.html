@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>AI 助手</title>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f0f2f5;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      text-align: center;
+      padding: 16px 12px;
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: 2px;
+      flex-shrink: 0;
+    }
+
+    /* ── Transcript area ── */
+    #transcript-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .bubble {
+      background: #fff;
+      border-radius: 16px;
+      padding: 14px 18px;
+      font-size: 1.05rem;
+      line-height: 1.6;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      max-width: 92%;
+      word-break: break-word;
+    }
+
+    .bubble.btn1 { border-left: 5px solid #27ae60; }
+    .bubble.btn2 { border-left: 5px solid #e74c3c; align-self: flex-end; }
+    .bubble.error {
+      background: #fff0f0;
+      border-left-color: #c0392b;
+      color: #c0392b;
+      white-space: pre-line;
+    }
+
+    #status {
+      text-align: center;
+      font-size: 0.9rem;
+      color: #888;
+      padding: 6px 0;
+      min-height: 28px;
+      flex-shrink: 0;
+    }
+
+    #status.recording {
+      color: #e74c3c;
+      font-weight: 600;
+      animation: blink 1s step-start infinite;
+    }
+
+    @keyframes blink {
+      50% { opacity: 0.3; }
+    }
+
+    /* ── Bottom buttons ── */
+    .btn-row {
+      display: flex;
+      gap: 4%;
+      padding: 12px 3%;
+      padding-bottom: max(12px, env(safe-area-inset-bottom));
+      background: #fff;
+      box-shadow: 0 -2px 12px rgba(0,0,0,0.08);
+      flex-shrink: 0;
+    }
+
+    .record-btn {
+      flex: 0 0 40%;
+      height: clamp(80px, 18vw, 120px);
+      border: none;
+      border-radius: 18px;
+      font-size: clamp(2.5rem, 12vw, 5rem);
+      font-weight: 900;
+      color: #fff;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+      transition: transform 0.08s, filter 0.08s;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+    }
+
+    .record-btn:active,
+    .record-btn.pressing {
+      transform: scale(0.95);
+      filter: brightness(0.85);
+    }
+
+    #btn1 { background: #27ae60; margin-left: auto; }
+    #btn2 { background: #e74c3c; margin-right: auto; }
+  </style>
+</head>
+<body>
+
+  <header>AI 助手</header>
+
+  <div id="transcript-area"></div>
+
+  <div id="status">按住按鈕開始錄音</div>
+
+  <div class="btn-row">
+    <button id="btn1" class="record-btn">1</button>
+    <button id="btn2" class="record-btn">2</button>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const transcriptArea = document.getElementById('transcript-area');
+
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let activeBtn = null;
+    let stream = null;
+
+    async function getStream() {
+      if (stream) return stream;
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      return stream;
+    }
+
+    async function startRecording(btn) {
+      if (activeBtn) return;
+      activeBtn = btn;
+      audioChunks = [];
+
+      try {
+        const s = await getStream();
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : 'audio/ogg';
+
+        mediaRecorder = new MediaRecorder(s, { mimeType });
+        mediaRecorder.ondataavailable = e => {
+          if (e.data.size > 0) audioChunks.push(e.data);
+        };
+        mediaRecorder.start(100);
+
+        btn.classList.add('pressing');
+        statusEl.textContent = '● 錄音中…';
+        statusEl.className = 'recording';
+      } catch (err) {
+        statusEl.textContent = '麥克風存取失敗：' + err.message;
+        statusEl.className = '';
+        activeBtn = null;
+      }
+    }
+
+    async function stopRecording() {
+      if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+      const btn = activeBtn;
+      activeBtn = null;
+
+      return new Promise(resolve => {
+        mediaRecorder.onstop = async () => {
+          btn.classList.remove('pressing');
+          statusEl.textContent = '辨識中…';
+          statusEl.className = '';
+
+          const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+          audioChunks = [];
+
+          const formData = new FormData();
+          formData.append('audio', blob, 'recording.webm');
+
+          try {
+            const resp = await fetch('/transcribe', { method: 'POST', body: formData });
+            const data = await resp.json();
+
+            if (data.text) {
+              addBubble(data.text, btn.id, data.error);
+              statusEl.textContent = data.error ? data.error : '按住按鈕開始錄音';
+            } else {
+              statusEl.textContent = '錯誤：' + (data.error || '未知錯誤');
+            }
+          } catch (e) {
+            statusEl.textContent = '傳送失敗：' + e.message;
+          }
+          resolve();
+        };
+        mediaRecorder.stop();
+      });
+    }
+
+    function addBubble(text, btnId, error) {
+      const div = document.createElement('div');
+      div.className = `bubble ${btnId}${error ? ' error' : ''}`;
+      div.textContent = error ? `${text}\n${error}` : text;
+      transcriptArea.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // ── Attach pointer events (works for mouse + touch) ──
+    ['btn1', 'btn2'].forEach(id => {
+      const btn = document.getElementById(id);
+
+      btn.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        btn.setPointerCapture(e.pointerId);
+        startRecording(btn);
+      });
+
+      btn.addEventListener('pointerup', e => {
+        e.preventDefault();
+        if (activeBtn === btn) stopRecording();
+      });
+
+      btn.addEventListener('pointercancel', e => {
+        if (activeBtn === btn) stopRecording();
+      });
+    });
+  </script>
+</body>
+</html>

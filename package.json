@@ -1,0 +1,28 @@
+{
+  "name": "blood_pressure_mobile",
+  "version": "1.0.0",
+  "description": "A mobile web application for tracking and managing blood pressure readings.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sabgkang/blood-pressure-mobile.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/sabgkang/blood-pressure-mobile/issues"
+  },
+  "homepage": "https://github.com/sabgkang/blood-pressure-mobile#readme",
+  "dependencies": {
+    "axios": "^1.15.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "form-data": "^4.0.5",
+    "multer": "^2.1.1"
+  }
+}

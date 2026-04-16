@@ -203,8 +203,12 @@
     let stream = null;
 
     async function getStream() {
-      if (stream) return stream;
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Re-acquire if stream is missing or any track has ended (e.g. after screen lock / iOS interruption)
+      const isLive = stream && stream.getTracks().every(t => t.readyState === 'live');
+      if (!isLive) {
+        if (stream) stream.getTracks().forEach(t => t.stop());
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
       return stream;
     }
 

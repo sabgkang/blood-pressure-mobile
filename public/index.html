@@ -46,6 +46,21 @@
       font-weight: 700;
       letter-spacing: 2px;
       flex-shrink: 0;
+      position: relative;
+    }
+    #reload-btn {
+      position: absolute;
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: 1px solid rgba(255,255,255,0.4);
+      color: #fff;
+      font-size: 1.2rem;
+      border-radius: 8px;
+      padding: 4px 10px;
+      cursor: pointer;
+      line-height: 1;
     }
 
     /* ── Transcript area ── */
@@ -182,7 +197,10 @@
 </head>
 <body>
 
-  <header>血壓紀錄助手</header>
+  <header>
+    血壓紀錄助手
+    <button id="reload-btn" onclick="location.reload(true)">&#x21BB;</button>
+  </header>
 
   <div id="transcript-area"></div>
 

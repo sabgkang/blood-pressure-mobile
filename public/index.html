@@ -92,9 +92,40 @@
       color: #c0392b;
       white-space: pre-line;
     }
+    .bubble-datetime {
+      font-size: 1.2rem;
+      color: #aaa;
+      margin-bottom: 4px;
+    }
+    .bubble-values {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: #222;
+      display: flex;
+      gap: 18px;
+      align-items: baseline;
+      margin-bottom: 4px;
+    }
+    .bubble-values .val-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .bubble-values .val-label {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #888;
+      line-height: 1;
+      margin-bottom: 2px;
+    }
+    .bubble-values .val-num {
+      font-size: 1.4rem;
+      font-weight: 900;
+      line-height: 1;
+    }
     .upload-tag {
       display: inline-block;
-      margin-top: 6px;
+      margin-top: 4px;
       font-size: 1.2rem;
       padding: 2px 8px;
       border-radius: 10px;
@@ -163,7 +194,7 @@
       display: flex;
       gap: 4%;
       padding: 12px 3%;
-      padding-bottom: max(12px, env(safe-area-inset-bottom));
+      padding-bottom: max(64px, calc(env(safe-area-inset-bottom) + 36px));
       background: #fff;
       box-shadow: 0 -2px 12px rgba(0,0,0,0.08);
       flex-shrink: 0;
@@ -311,11 +342,33 @@
       const div = document.createElement('div');
       div.className = `bubble ${btnId}${error ? ' error' : ''}`;
 
-      const main = document.createElement('div');
-      main.textContent = error ? `${text}\n${error}` : text;
-      div.appendChild(main);
+      if (error) {
+        const main = document.createElement('div');
+        main.style.whiteSpace = 'pre-line';
+        main.textContent = `${text}\n${error}`;
+        div.appendChild(main);
+      } else {
+        // Line 1: datetime
+        const now = new Date();
+        const p = n => String(n).padStart(2, '0');
+        const dtEl = document.createElement('div');
+        dtEl.className = 'bubble-datetime';
+        dtEl.textContent = `${now.getFullYear()}/${p(now.getMonth()+1)}/${p(now.getDate())} ${p(now.getHours())}:${p(now.getMinutes())}`;
+        div.appendChild(dtEl);
 
-      if (!error) {
+        // Line 2: SYS / DIA / HR
+        const parts = text.split(',');
+        const valRow = document.createElement('div');
+        valRow.className = 'bubble-values';
+        [['SYS', parts[0]], ['DIA', parts[1]], ['HR', parts[2]]].forEach(([label, num]) => {
+          const item = document.createElement('div');
+          item.className = 'val-item';
+          item.innerHTML = `<span class="val-label">${label}</span><span class="val-num">${num ?? '—'}</span>`;
+          valRow.appendChild(item);
+        });
+        div.appendChild(valRow);
+
+        // Line 3: upload status
         const tag = document.createElement('div');
         tag.className = `upload-tag ${uploaded ? 'ok' : 'fail'}`;
         tag.textContent = uploaded ? '已上傳' : '上傳失敗';

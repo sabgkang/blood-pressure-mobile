@@ -1,5 +1,14 @@
 # 血壓紀錄助手
 
+
+---
+
+master branch 是使用早期 Claude Code 開發，已使用一段時間，現在佈署在 Racknerd VPS。
+2026-09-11 使用 Codex (5.5 Sol) 修正問題。但  Racknerd VPS 還是使用 master，有需要再用新版吧。
+為測試起見，先將 PWA disabled
+
+---
+
 手機優先的 PWA。按住使用者按鈕錄音，伺服器會透過 OpenAI 語音轉文字，驗證血壓數值後保存至 `data/records.json`，並可選擇同步至 Webhook。
 
 ## 設定與啟動

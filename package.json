@@ -2,10 +2,10 @@
   "name": "blood_pressure_mobile",
   "version": "1.0.0",
   "description": "A mobile web application for tracking and managing blood pressure readings.",
-  "main": "server.js",
+  "main": "blood-pressure-mobile-server.js",
   "scripts": {
-    "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node --use-system-ca blood-pressure-mobile-server.js",
+    "test": "node --test"
   },
   "repository": {
     "type": "git",

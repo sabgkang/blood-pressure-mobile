@@ -1,5 +1,14 @@
-const CACHE = 'bp-v1';
-const STATIC = ['/', '/index.html', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png'];
+const CACHE = 'bp-v2';
+const STATIC = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/icons/icon.svg',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/apple-touch-icon.png',
+];
+const STATIC_PATHS = new Set(STATIC);
 
 // Cache static assets on install
 self.addEventListener('install', e => {
@@ -19,12 +28,19 @@ self.addEventListener('activate', e => {
   self.clients.claim();
 });
 
-// Network-first for API calls, cache-first for static assets
+// API 永遠走網路；靜態內容採 network-first，部署新版時不會卡在舊快取。
 self.addEventListener('fetch', e => {
-  if (e.request.url.includes('/transcribe')) {
-    return; // always hit network for API
-  }
+  const url = new URL(e.request.url);
+  if (e.request.method !== 'GET' || url.origin !== self.location.origin || !STATIC_PATHS.has(url.pathname)) return;
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request))
+    fetch(e.request)
+      .then(response => {
+        if (response.ok && e.request.method === 'GET') {
+          const copy = response.clone();
+          e.waitUntil(caches.open(CACHE).then(cache => cache.put(e.request, copy)));
+        }
+        return response;
+      })
+      .catch(() => caches.match(e.request))
   );
 });

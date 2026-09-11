@@ -4,14 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 
-  <!-- PWA -->
-  <link rel="manifest" href="/manifest.json" />
   <meta name="theme-color" content="#1a1a2e" />
 
-  <!-- iOS PWA -->
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="血壓助手" />
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 
   <title>血壓紀錄助手</title>
@@ -230,25 +224,22 @@
 
   <header>
     血壓紀錄助手
-    <button id="reload-btn" onclick="location.reload(true)">&#x21BB;</button>
+    <button id="reload-btn" type="button" aria-label="清除快取並重新載入">&#x21BB;</button>
   </header>
 
   <div id="transcript-area"></div>
 
   <div id="status">按住按鈕開始錄音</div>
-
   <div class="btn-row">
-    <button id="btn1" class="record-btn">1</button>
-    <button id="btn2" class="record-btn">2</button>
+    <button id="btn1" class="record-btn" type="button" aria-label="使用者一，按住錄音">1</button>
+    <button id="btn2" class="record-btn" type="button" aria-label="使用者二，按住錄音">2</button>
   </div>
 
   <script>
     const statusEl = document.getElementById('status');
     const transcriptArea = document.getElementById('transcript-area');
 
-    let mediaRecorder = null;
-    let audioChunks = [];
-    let activeBtn = null;
+    let recordingSession = null;
     let stream = null;
 
     async function getStream() {
@@ -262,23 +253,25 @@
     }
 
     async function startRecording(btn) {
-      if (activeBtn) return;
-      activeBtn = btn;
-      audioChunks = [];
+      if (recordingSession) return;
+      const session = { btn, recorder: null, chunks: [], cancelled: false };
+      recordingSession = session;
 
       try {
         const s = await getStream();
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? 'audio/webm;codecs=opus'
-          : MediaRecorder.isTypeSupported('audio/webm')
-          ? 'audio/webm'
-          : 'audio/ogg';
-
-        mediaRecorder = new MediaRecorder(s, { mimeType });
-        mediaRecorder.ondataavailable = e => {
-          if (e.data.size > 0) audioChunks.push(e.data);
+        if (session.cancelled || recordingSession !== session) return;
+        const mimeType = [
+          'audio/webm;codecs=opus',
+          'audio/webm',
+          'audio/mp4',
+          'audio/ogg;codecs=opus',
+          'audio/ogg',
+        ].find(type => MediaRecorder.isTypeSupported(type));
+        session.recorder = mimeType ? new MediaRecorder(s, { mimeType }) : new MediaRecorder(s);
+        session.recorder.ondataavailable = e => {
+          if (e.data.size > 0) session.chunks.push(e.data);
         };
-        mediaRecorder.start(100);
+        session.recorder.start(100);
 
         btn.classList.add('pressing');
         statusEl.textContent = '● 錄音中…';
@@ -286,31 +279,47 @@
       } catch (err) {
         statusEl.textContent = '麥克風存取失敗：' + err.message;
         statusEl.className = '';
-        activeBtn = null;
+        if (recordingSession === session) recordingSession = null;
       }
     }
 
-    async function stopRecording() {
-      if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
-      const btn = activeBtn;
-      activeBtn = null;
+    async function stopRecording(btn) {
+      const session = recordingSession;
+      if (!session || session.btn !== btn) return;
+      recordingSession = null;
+      if (!session.recorder) {
+        session.cancelled = true;
+        statusEl.textContent = '按住按鈕開始錄音';
+        return;
+      }
+      if (session.recorder.state === 'inactive') return;
 
       return new Promise(resolve => {
-        mediaRecorder.onstop = async () => {
+        session.recorder.onstop = async () => {
           btn.classList.remove('pressing');
           statusEl.textContent = '辨識中…';
           statusEl.className = '';
 
-          const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
-          audioChunks = [];
+          const blob = new Blob(session.chunks, { type: session.recorder.mimeType });
+          session.chunks = [];
+          if (!blob.size) {
+            statusEl.textContent = '錄音時間太短，請按住後再說話';
+            resolve();
+            return;
+          }
 
           const formData = new FormData();
-          formData.append('audio', blob, 'recording.webm');
+          const extension = session.recorder.mimeType.includes('mp4') ? 'm4a'
+            : session.recorder.mimeType.includes('ogg') ? 'ogg' : 'webm';
+          formData.append('audio', blob, 'recording.' + extension);
           formData.append('btnId', btn.id);
 
           try {
             const resp = await fetch('/transcribe', { method: 'POST', body: formData });
+            const contentType = resp.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) throw new Error('伺服器回應格式錯誤');
             const data = await resp.json();
+            if (!resp.ok && !data.type) throw new Error(data.error || '伺服器錯誤');
 
             if (data.type === 'query') {
               if (data.error) {
@@ -320,25 +329,27 @@
                 addQueryBubble(data.label, data.records, btn.id);
                 statusEl.textContent = `查詢完成：${data.label}，共 ${data.records.length} 筆`;
               }
-            } else {
-              // BP recording result
+            } else if (data.type === 'bp') {
               if (data.text) {
-                addBubble(data.text, btn.id, data.error, data.uploaded);
-                statusEl.textContent = data.error ? data.error : '按住按鈕開始錄音';
+                addBubble(data.text, btn.id, data.error, data);
+                statusEl.textContent = data.error || data.syncError || '按住按鈕開始錄音';
               } else {
                 statusEl.textContent = '錯誤：' + (data.error || '未知錯誤');
               }
+            } else {
+              addErrorBubble(data.error || '無法理解語音內容', btn.id);
+              statusEl.textContent = data.error || '無法理解語音內容';
             }
           } catch (e) {
             statusEl.textContent = '傳送失敗：' + e.message;
           }
           resolve();
         };
-        mediaRecorder.stop();
+        session.recorder.stop();
       });
     }
 
-    function addBubble(text, btnId, error, uploaded) {
+    function addBubble(text, btnId, error, result) {
       const div = document.createElement('div');
       div.className = `bubble ${btnId}${error ? ' error' : ''}`;
 
@@ -368,10 +379,13 @@
         });
         div.appendChild(valRow);
 
-        // Line 3: upload status
+        // Line 3: local save and optional remote sync status
         const tag = document.createElement('div');
-        tag.className = `upload-tag ${uploaded ? 'ok' : 'fail'}`;
-        tag.textContent = uploaded ? '已上傳' : '上傳失敗';
+        tag.className = `upload-tag ${result.saved ? 'ok' : 'fail'}`;
+        if (!result.saved) tag.textContent = '儲存失敗';
+        else if (!result.syncConfigured) tag.textContent = '已保存';
+        else if (result.synced) tag.textContent = '已保存並同步';
+        else tag.textContent = '已保存，同步失敗';
         div.appendChild(tag);
       }
 
@@ -412,8 +426,15 @@
         records.forEach(r => {
           const tr = document.createElement('tr');
           // Show date as MM/DD HH:mm
-          const dt = r.datetime.replace(/^\d{4}-/, '').replace('-', '/');
-          tr.innerHTML = `<td>${dt}</td><td>${r.sys}</td><td>${r.dia}</td><td>${r.hr}</td>`;
+          const date = new Date(r.datetime);
+          const dt = Number.isFinite(date.getTime())
+            ? date.toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+            : '日期錯誤';
+          [dt, r.sys, r.dia, r.hr].forEach(value => {
+            const td = document.createElement('td');
+            td.textContent = value;
+            tr.appendChild(td);
+          });
           table.appendChild(tr);
         });
         div.appendChild(table);
@@ -435,18 +456,40 @@
 
       btn.addEventListener('pointerup', e => {
         e.preventDefault();
-        if (activeBtn === btn) stopRecording();
+        stopRecording(btn);
       });
 
       btn.addEventListener('pointercancel', e => {
-        if (activeBtn === btn) stopRecording();
+        stopRecording(btn);
       });
+    });
+
+    document.getElementById('reload-btn').addEventListener('click', async () => {
+      if ('caches' in window) {
+        const names = await caches.keys();
+        await Promise.all(names.map(name => caches.delete(name)));
+      }
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map(registration => registration.unregister()));
+      }
+      location.reload();
+    });
+
+    window.addEventListener('pagehide', () => {
+      if (stream) stream.getTracks().forEach(track => track.stop());
     });
   </script>
 
   <script>
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js');
+      // 測試期間停用 PWA，並清除先前註冊的 Service Worker。
+      navigator.serviceWorker.getRegistrations()
+        .then(registrations => Promise.all(registrations.map(registration => registration.unregister())));
+    }
+    if ('caches' in window) {
+      caches.keys()
+        .then(names => Promise.all(names.filter(name => name.startsWith('bp-')).map(name => caches.delete(name))));
     }
   </script>
 </body>

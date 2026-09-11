@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { RecordStore, cnToNum, createApp, detectIntent, formatBP, parseQuery } = require('../blood-pressure-mobile-server');
+const { RecordStore, cnToNum, createApp, detectIntent, formatBP, normalizeSpokenBP, parseQuery } = require('../blood-pressure-mobile-server');
 
 test('解析中文數字', () => {
   assert.equal(cnToNum('兩'), 2);
@@ -17,6 +17,10 @@ test('解析與驗證血壓', () => {
   assert.match(formatBP('80,120,70').error, /收縮壓/);
   assert.equal(detectIntent('120，80，70'), 'bp');
   assert.equal(detectIntent('今天血壓如何'), 'query');
+  assert.equal(normalizeSpokenBP('一二三七七八八'), '1237788');
+  assert.equal(normalizeSpokenBP('一二三 七七 八八'), '1237788');
+  assert.deepEqual(formatBP(normalizeSpokenBP('一二三七七八八')), { text: '123,77,88', error: null });
+  assert.equal(normalizeSpokenBP('查詢前十二天'), '查詢前十二天');
 });
 
 test('相對日期不會把前12天誤判為兩天', () => {
@@ -54,7 +58,7 @@ test('RecordStore 會持久保存及查詢真實紀錄', async t => {
 
 test('HTTP 端點要求登入', async t => {
   const store = { records: [], add: async () => {}, query: () => [] };
-  const server = createApp({ username: 'paul', password: 'test-password', openaiApiKey: 'test', store }).listen(0);
+  const server = createApp({ username: 'paul', password: 'test-password', store }).listen(0);
   t.after(() => new Promise(resolve => server.close(resolve)));
   await new Promise(resolve => server.once('listening', resolve));
   const base = 'http://127.0.0.1:' + server.address().port;
@@ -68,16 +72,20 @@ test('HTTP 端點要求登入', async t => {
 
 test('拒絕弱密碼與非 HTTPS Webhook', () => {
   assert.throws(
-    () => createApp({ username: 'paul', password: 'short', openaiApiKey: 'test', store: {} }),
+    () => createApp({ username: 'paul', password: 'short', store: {} }),
     /至少需要 12 個字元/,
   );
   assert.throws(
     () => createApp({ username: 'paul', password: 'test-password', webhookUrl: 'http://example.com', store: {} }),
     /必須使用 HTTPS/,
   );
+  assert.throws(
+    () => createApp({ username: 'paul', password: 'test-password', asrApiUrl: 'invalid', store: {} }),
+    /ASR_API_URL 格式無效/,
+  );
 });
 
-test('語音血壓會保存並以 POST 同步', async t => {
+test('語音血壓會保存並透過 GET 同步', async t => {
   const saved = [];
   const calls = [];
   const store = { add: async record => saved.push(record), query: () => [] };
@@ -87,11 +95,15 @@ test('語音血壓會保存並以 POST 同步', async t => {
       if (url.includes('/audio/transcriptions')) return { data: { text: '120 80 70' } };
       return { data: { ok: true } };
     },
+    get: async (url, config) => {
+      calls.push({ url, ...config });
+      return { data: { ok: true } };
+    },
   };
   const server = createApp({
     username: 'paul',
     password: 'test-password',
-    openaiApiKey: 'test',
+    asrApiUrl: 'https://tea-asr4090.yo3dp.cc/v1/audio/transcriptions',
     webhookUrl: 'https://example.com/hook',
     store,
     http,
@@ -112,5 +124,5 @@ test('語音血壓會保存並以 POST 同步', async t => {
   assert.equal(result.saved, true);
   assert.equal(result.synced, true);
   assert.equal(saved.length, 1);
-  assert.deepEqual(calls[1].body, { UR: 'A', BU: 120, BD: 80, HR: 70 });
+  assert.deepEqual(calls[1].params, { UR: 'A', BU: 120, BD: 80, HR: 70 });
 });

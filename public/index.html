@@ -252,6 +252,51 @@
       return stream;
     }
 
+    function encodeWav(audioBuffer) {
+      const samples = audioBuffer.getChannelData(0);
+      const wav = new ArrayBuffer(44 + samples.length * 2);
+      const view = new DataView(wav);
+      const writeText = (offset, text) => {
+        for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
+      };
+      writeText(0, 'RIFF');
+      view.setUint32(4, 36 + samples.length * 2, true);
+      writeText(8, 'WAVE');
+      writeText(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, 16000, true);
+      view.setUint32(28, 32000, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeText(36, 'data');
+      view.setUint32(40, samples.length * 2, true);
+      for (let i = 0; i < samples.length; i++) {
+        const sample = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(44 + i * 2, sample < 0 ? sample * 32768 : sample * 32767, true);
+      }
+      return new Blob([wav], { type: 'audio/wav' });
+    }
+
+    async function convertRecordingToWav(blob) {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass || !window.OfflineAudioContext) throw new Error('瀏覽器不支援音訊轉換');
+      const context = new AudioContextClass();
+      try {
+        const decoded = await context.decodeAudioData(await blob.arrayBuffer());
+        const frameCount = Math.max(1, Math.ceil(decoded.duration * 16000));
+        const offline = new OfflineAudioContext(1, frameCount, 16000);
+        const source = offline.createBufferSource();
+        source.buffer = decoded;
+        source.connect(offline.destination);
+        source.start();
+        return encodeWav(await offline.startRendering());
+      } finally {
+        await context.close();
+      }
+    }
+
     async function startRecording(btn) {
       if (recordingSession) return;
       const session = { btn, recorder: null, chunks: [], cancelled: false };
@@ -309,9 +354,17 @@
           }
 
           const formData = new FormData();
-          const extension = session.recorder.mimeType.includes('mp4') ? 'm4a'
-            : session.recorder.mimeType.includes('ogg') ? 'ogg' : 'webm';
-          formData.append('audio', blob, 'recording.' + extension);
+          let uploadBlob = blob;
+          let filename = session.recorder.mimeType.includes('mp4') ? 'recording.m4a'
+            : session.recorder.mimeType.includes('ogg') ? 'recording.ogg' : 'recording.webm';
+          try {
+            statusEl.textContent = '音訊轉換中…';
+            uploadBlob = await convertRecordingToWav(blob);
+            filename = 'recording.wav';
+          } catch (error) {
+            console.warn('WAV conversion unavailable; uploading original recording:', error);
+          }
+          formData.append('audio', uploadBlob, filename);
           formData.append('btnId', btn.id);
 
           try {

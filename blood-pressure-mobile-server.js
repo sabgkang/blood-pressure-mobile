@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: ['.env.local', '.env'], quiet: true });
 
 const crypto = require('crypto');
 const express = require('express');
@@ -124,6 +124,14 @@ function detectIntent(text) {
   return digits.length >= 6 && digits.length <= 9 && numericOnly ? 'bp' : 'query';
 }
 
+function normalizeSpokenBP(text) {
+  const compact = text.replace(/[\s,，。./／、]/g, '');
+  if (!/^[零〇一二兩两三四五六七八九]+$/.test(compact)) return text;
+  const digitMap = { 零: '0', 〇: '0', 一: '1', 二: '2', 兩: '2', 两: '2', 三: '3', 四: '4', 五: '5', 六: '6', 七: '7', 八: '8', 九: '9' };
+  const normalized = [...compact].map(character => digitMap[character]).join('');
+  return normalized.length >= 6 && normalized.length <= 9 ? normalized : text;
+}
+
 function safeEqual(actual, expected) {
   const a = Buffer.from(actual || '');
   const b = Buffer.from(expected || '');
@@ -209,14 +217,24 @@ class RecordStore {
 function createApp(options) {
   options = options || {};
   const config = {
-    openaiApiKey: options.openaiApiKey === undefined ? process.env.OPENAI_API_KEY : options.openaiApiKey,
+    asrApiUrl: options.asrApiUrl === undefined
+      ? (process.env.ASR_API_URL || 'https://tea-asr4090.yo3dp.cc/v1/audio/transcriptions')
+      : options.asrApiUrl,
+    asrApiKey: options.asrApiKey === undefined ? process.env.ASR_API_KEY : options.asrApiKey,
     webhookUrl: options.webhookUrl === undefined ? process.env.WEBHOOK_URL : options.webhookUrl,
+    webhookMethod: String(options.webhookMethod === undefined ? process.env.WEBHOOK_METHOD || 'GET' : options.webhookMethod || 'GET').toUpperCase(),
     username: options.username === undefined ? process.env.APP_USERNAME : options.username,
     password: options.password === undefined ? process.env.APP_PASSWORD : options.password,
     timeout: options.timeout || REQUEST_TIMEOUT_MS,
   };
   if (!config.username || !config.password) throw new Error('必須設定 APP_USERNAME 與 APP_PASSWORD');
   if (config.password.length < 12) throw new Error('APP_PASSWORD 至少需要 12 個字元');
+  try {
+    const asrUrl = new URL(config.asrApiUrl);
+    if (!['http:', 'https:'].includes(asrUrl.protocol)) throw new Error();
+  } catch {
+    throw new Error('ASR_API_URL 格式無效');
+  }
   if (config.webhookUrl) {
     let webhook;
     try {
@@ -225,6 +243,7 @@ function createApp(options) {
       throw new Error('WEBHOOK_URL 格式無效');
     }
     if (webhook.protocol !== 'https:') throw new Error('WEBHOOK_URL 必須使用 HTTPS');
+    if (!['GET', 'POST'].includes(config.webhookMethod)) throw new Error('WEBHOOK_METHOD 必須是 GET 或 POST');
   }
   const store = options.store || new RecordStore(DATA_FILE);
   if (!options.store) store.load();
@@ -253,27 +272,30 @@ function createApp(options) {
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
   app.post('/transcribe', sameOrigin, rateLimiter(15 * 60000, 20), upload.single('audio'), async (req, res) => {
-    if (!config.openaiApiKey) return res.status(503).json({ error: '伺服器尚未設定語音辨識服務' });
     if (!req.file) return res.status(400).json({ error: '沒有收到音訊檔案' });
     if (!['btn1', 'btn2'].includes(req.body.btnId)) return res.status(400).json({ error: '使用者按鈕無效' });
     try {
+      console.log('Sending audio to TEA-ASR:', req.file.mimetype, req.file.size + ' bytes');
       const form = new FormData();
       const extension = req.file.mimetype.includes('mp4') ? 'm4a' : req.file.mimetype.includes('ogg') ? 'ogg' : 'webm';
       form.append('file', req.file.buffer, { filename: 'recording.' + extension, contentType: req.file.mimetype });
-      form.append('model', 'whisper-1');
-      form.append('language', 'zh');
-      form.append('prompt', '血壓數字或查詢記錄，例如：123,78,90 或 本週血壓');
-      const response = await http.post('https://api.openai.com/v1/audio/transcriptions', form, {
-        headers: { Authorization: 'Bearer ' + config.openaiApiKey, ...form.getHeaders() },
+      form.append('model', 'JacobLinCool/TEA-ASR-1.1');
+      form.append('language', 'Chinese');
+      form.append('context', '血壓、收縮壓、舒張壓、心率、本週、本月、日期範圍');
+      const asrHeaders = { ...form.getHeaders() };
+      if (config.asrApiKey) asrHeaders.Authorization = 'Bearer ' + config.asrApiKey;
+      const response = await http.post(config.asrApiUrl, form, {
+        headers: asrHeaders,
         timeout: config.timeout,
         maxContentLength: MAX_AUDIO_BYTES + 1048576,
         maxBodyLength: MAX_AUDIO_BYTES + 1048576,
       });
       const raw = String(response.data && response.data.text || '').trim();
       if (!raw) return res.status(422).json({ type: 'unknown', error: '沒有辨識到語音內容' });
+      const normalized = normalizeSpokenBP(raw);
 
-      if (detectIntent(raw) === 'bp') {
-        const parsed = formatBP(raw);
+      if (detectIntent(normalized) === 'bp') {
+        const parsed = formatBP(normalized);
         if (parsed.error) return res.status(422).json({ type: 'bp', ...parsed, saved: false, synced: false });
         const [sys, dia, hr] = parsed.text.split(',').map(Number);
         const record = {
@@ -287,14 +309,27 @@ function createApp(options) {
         let syncError = null;
         if (config.webhookUrl) {
           try {
-            await http.post(config.webhookUrl, { UR: record.user, BU: sys, BD: dia, HR: hr }, {
-              timeout: config.timeout,
-              headers: { 'Content-Type': 'application/json' },
-            });
+            const webhookData = { UR: record.user, BU: sys, BD: dia, HR: hr };
+            if (config.webhookMethod === 'POST') {
+              await http.post(config.webhookUrl, webhookData, {
+                timeout: config.timeout,
+                headers: { 'Content-Type': 'application/json' },
+              });
+            } else {
+              await http.get(config.webhookUrl, {
+                params: webhookData,
+                timeout: config.timeout,
+              });
+            }
             synced = true;
           } catch (error) {
             syncError = '遠端同步失敗，本機紀錄已保存';
-            console.error('Webhook sync failed:', error.message);
+            console.error(
+              'Webhook sync failed:',
+              'method=' + config.webhookMethod,
+              'status=' + (error.response && error.response.status || 'none'),
+              'detail=' + (error.response && JSON.stringify(error.response.data) || error.message),
+            );
           }
         }
         return res.json({ type: 'bp', text: parsed.text, error: null, saved: true, synced, syncError, syncConfigured: Boolean(config.webhookUrl) });
@@ -305,9 +340,21 @@ function createApp(options) {
       if (parsedQuery.error) return res.status(422).json({ type: 'query', error: parsedQuery.error });
       return res.json({ type: 'query', label: parsedQuery.label, records: store.query(parsedQuery.from, parsedQuery.to), error: null });
     } catch (error) {
-      console.error('Transcription failed:', error.message);
+      console.error(
+        'TEA-ASR transcription failed:',
+        'status=' + (error.response && error.response.status || 'none'),
+        'detail=' + (error.response && error.response.data && error.response.data.detail || error.message),
+      );
+      const upstreamStatus = error.response && error.response.status;
+      const upstreamDetail = error.response && error.response.data && error.response.data.detail;
+      if (upstreamStatus === 401) {
+        return res.status(502).json({ error: 'TEA-ASR API Key 無效或未設定' });
+      }
+      if (upstreamDetail) {
+        return res.status(502).json({ error: 'TEA-ASR：' + upstreamDetail });
+      }
       const status = error.code === 'ECONNABORTED' ? 504 : 502;
-      return res.status(status).json({ error: status === 504 ? '語音辨識服務逾時，請重試' : '語音辨識服務暫時無法使用' });
+      return res.status(status).json({ error: status === 504 ? 'TEA-ASR 服務逾時，請重試' : 'TEA-ASR 服務暫時無法使用' });
     }
   });
 
@@ -330,4 +377,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { RecordStore, cnToNum, createApp, detectIntent, formatBP, parseQuery, validLocalDate };
+module.exports = { RecordStore, cnToNum, createApp, detectIntent, formatBP, normalizeSpokenBP, parseQuery, validLocalDate };

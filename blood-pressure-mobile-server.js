@@ -16,25 +16,48 @@ const REQUEST_TIMEOUT_MS = 30000;
 
 function formatBP(text) {
   const digits = text.replace(/\D/g, '');
-  if (digits.length < 6 || digits.length > 9) {
+  const layouts = {
+    6: [[2, 2, 2]],
+    7: [[3, 2, 2], [2, 2, 3]],
+    8: [[3, 3, 2], [3, 2, 3]],
+    9: [[3, 3, 3]],
+  };
+  if (!layouts[digits.length]) {
     return { text, error: '無法解析：數字長度 ' + digits.length + ' 不符預期（6–9 位）' };
   }
-  for (let i = 2; i <= 3; i++) {
-    for (let j = i + 2; j <= i + 3; j++) {
-      const pulseLen = digits.length - j;
-      if (pulseLen < 2 || pulseLen > 3) continue;
-      const sys = Number(digits.slice(0, i));
-      const dia = Number(digits.slice(i, j));
-      const hr = Number(digits.slice(j));
-      if (sys >= 60 && sys <= 250 && dia >= 30 && dia <= 150 && hr >= 30 && hr <= 220) {
-        const formatted = [sys, dia, hr].join(',');
-        return sys > dia
-          ? { text: formatted, error: null }
-          : { text: formatted, error: '收縮壓（' + sys + '）必須高於舒張壓（' + dia + '）' };
-      }
-    }
+
+  const validate = ([sys, dia, hr]) => (
+    sys >= 60 && sys <= 250
+    && dia >= 30 && dia <= 150
+    && hr >= 30 && hr <= 220
+    && sys > dia
+  );
+  const parseLayout = ([sysLength, diaLength]) => [
+    Number(digits.slice(0, sysLength)),
+    Number(digits.slice(sysLength, sysLength + diaLength)),
+    Number(digits.slice(sysLength + diaLength)),
+  ];
+
+  // 明確說出三組數字時，優先保留使用者的分組。
+  const groups = text.match(/\d+/g);
+  if (groups && groups.length === 3 && groups.every(group => group.length >= 2 && group.length <= 3)) {
+    const values = groups.map(Number);
+    if (validate(values)) return { text: values.join(','), error: null };
+    const [sys, dia, hr] = values;
+    const errors = [];
+    if (sys < 60 || sys > 250) errors.push('收縮壓 ' + sys + ' 超出範圍（60–250）');
+    if (dia < 30 || dia > 150) errors.push('舒張壓 ' + dia + ' 超出範圍（30–150）');
+    if (hr < 30 || hr > 220) errors.push('心率 ' + hr + ' 超出範圍（30–220）');
+    if (sys <= dia) errors.push('收縮壓（' + sys + '）必須高於舒張壓（' + dia + '）');
+    return { text: values.join(','), error: errors.join('；') };
   }
-  return { text, error: '無法從輸入內容解析出合理的血壓與心率' };
+
+  const candidates = layouts[digits.length].map(parseLayout).filter(validate);
+  if (candidates.length === 1) return { text: candidates[0].join(','), error: null };
+  if (candidates.length > 1) {
+    return { text, error: '數字分組不明確，請分別說出收縮壓、舒張壓與心率' };
+  }
+  return { text, error: '無法從輸入解析出合理的血壓與心率數值' };
 }
 
 function cnToNum(value) {

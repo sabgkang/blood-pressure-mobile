@@ -14,12 +14,20 @@ test('解析中文數字', () => {
 
 test('解析與驗證血壓', () => {
   assert.deepEqual(formatBP('120 80 70'), { text: '120,80,70', error: null });
-  assert.match(formatBP('80,120,70').error, /收縮壓/);
+  assert.deepEqual(formatBP('123 100 88'), { text: '123,100,88', error: null });
+  assert.deepEqual(formatBP('98 77 65'), { text: '98,77,65', error: null });
+  assert.deepEqual(formatBP('9877100'), { text: '98,77,100', error: null });
+  assert.deepEqual(formatBP('12080100'), { text: '120,80,100', error: null });
+  assert.deepEqual(formatBP('180120100'), { text: '180,120,100', error: null });
+  assert.match(formatBP('90,95,70').error, /收縮壓/);
+  assert.deepEqual(formatBP('120,80,100'), { text: '120,80,100', error: null });
   assert.equal(detectIntent('120，80，70'), 'bp');
+  assert.equal(detectIntent('180120100'), 'bp');
   assert.equal(detectIntent('今天血壓如何'), 'query');
   assert.equal(normalizeSpokenBP('一二三七七八八'), '1237788');
   assert.equal(normalizeSpokenBP('一二三 七七 八八'), '1237788');
   assert.deepEqual(formatBP(normalizeSpokenBP('一二三七七八八')), { text: '123,77,88', error: null });
+  assert.deepEqual(formatBP(normalizeSpokenBP('一二零八零一零零')), { text: '120,80,100', error: null });
   assert.equal(normalizeSpokenBP('查詢前十二天'), '查詢前十二天');
 });
 
